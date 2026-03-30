@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 import sys
 from urllib.parse import urlparse, parse_qs
 
@@ -9,24 +10,29 @@ from youtube_transcript_api import (
 )
 
 
+_VIDEO_ID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+
 def extract_video_id(url: str) -> str:
     """
-    Handles common YouTube URL formats:
+    Handles:
+    - Bare 11-char video IDs: Vitf8YaVXhc
     - https://www.youtube.com/watch?v=VIDEO_ID
     - https://youtu.be/VIDEO_ID
     """
+    url = url.strip()
+
+    if _VIDEO_ID_RE.match(url):
+        return url
+
     parsed = urlparse(url)
 
-    # youtu.be/VIDEO_ID
     if parsed.netloc in ("youtu.be", "www.youtu.be"):
         return parsed.path.lstrip("/")
 
-    # youtube.com/watch?v=VIDEO_ID
     qs = parse_qs(parsed.query)
     if "v" in qs:
         return qs["v"][0]
 
-    # Last fallback: try last path segment
     return parsed.path.split("/")[-1]
 
 
