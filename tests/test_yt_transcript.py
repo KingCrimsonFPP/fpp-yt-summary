@@ -16,3 +16,6 @@ def test_short_url():
 
 def test_short_url_with_params():
     assert extract_video_id("https://youtu.be/Vitf8YaVXhc?si=abc123") == "Vitf8YaVXhc"
+
+def test_www_short_url():
+    assert extract_video_id("https://www.youtu.be/Vitf8YaVXhc") == "Vitf8YaVXhc"
