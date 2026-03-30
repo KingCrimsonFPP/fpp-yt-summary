@@ -1,174 +1,97 @@
-# YouTube Transcript & Summary Tools
+# YouTube Summaries — Claude Code Plugin
 
-This repo contains two Python scripts:
+Slash commands for Claude Code that fetch YouTube transcripts, generate summaries, and let you search for exact quotes with timestamp links.
 
-1. `yt_transcript.py` – fetches the transcript of a YouTube video.
-2. `summarize_youtube.py` – fetches the transcript and sends it to OpenAI to generate a summary.
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/summarize [url\|id]` | Summarize a video. Omit arg to reuse last video. |
+| `/transcript [url\|id]` | Full transcript with timestamps. |
+| `/ask <question>` | Find where a topic was discussed + timestamp links. |
+
+All commands accept:
+- Full YouTube URL: `https://www.youtube.com/watch?v=VIDEO_ID`
+- Short URL: `https://youtu.be/VIDEO_ID`
+- Bare video ID: `VIDEO_ID` (11 characters)
+- No argument: reuses the last video automatically
+
+After fetching, each command asks whether you want output in the **CLI** or saved to a **file** in `output/`.
 
 ---
 
-## 1. Prerequisites
+## Installation
 
-- Python 3.9+ (tested with 3.11)
-- `pip` for installing dependencies
-- An OpenAI API key (for `summarize_youtube.py` only)
+### 1. Prerequisites
 
----
+- Python 3.9+
+- Node.js (for Claude Code CLI)
+- Claude Code installed: `npm install -g @anthropic-ai/claude-code`
 
-## 2. Script: `yt_transcript.py` (Get Transcripts Only)
+### 2. Clone this repo
 
-This script uses `youtube-transcript-api` to pull the transcript from a YouTube video and print it to stdout.
+```bash
+git clone <repo-url>
+cd yt_summaries
+```
 
-### 2.1. Install dependencies
+### 3. Install Python dependencies
 
 ```bash
 pip install youtube-transcript-api
 ```
 
-### 2.2. How to execute
-
-From the project root (where `yt_transcript.py` lives):
-
-```bash
-python yt_transcript.py "<YOUTUBE_URL>"
-```
-
-Example:
-
-```bash
-python yt_transcript.py "https://www.youtube.com/watch?v=Vitf8YaVXhc"
-```
-
-### 2.3. Output
-
-- By default, the script prints the full transcript as plain text to **stdout**.
-- You can redirect it to a file:
-
-```bash
-python yt_transcript.py "https://www.youtube.com/watch?v=Vitf8YaVXhc" > ./output/transcript.txt
-```
-
-Result:
-
-- `transcript.txt` will contain the merged transcript text (no timestamps) in the detected language.
-
----
-
-## 3. Script: `summarize_youtube.py` (Get Transcript + Summary via OpenAI)
-
-This script:
-
-1. Extracts the video ID from a YouTube URL.
-2. Uses `yt_transcript.py`’s functions to get the transcript.
-3. Sends the transcript to the OpenAI API with a summarization prompt.
-4. Prints a Markdown-formatted summary.
-
-### 3.1. Install dependencies
-
-```bash
-pip install youtube-transcript-api openai
-```
-
-(Optional virtual environment):
+Or with a virtual environment:
 
 ```bash
 python -m venv .venv
-.\.venv\Scriptsctivate   # Windows
-source .venv/bin/activate # macOS/Linux
-pip install youtube-transcript-api openai
+source .venv/bin/activate       # macOS/Linux
+.venv\Scripts\activate          # Windows
+pip install youtube-transcript-api
 ```
 
-### 3.2. Set environment variables
-
-#### Windows PowerShell
-
-**Temporary:**
-
-```powershell
-$env:OPENAI_API_KEY="sk-xxx_your_key_here"
-```
-
-**Persistent:**
-
-```powershell
-[System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "sk-xxx_your_key_here", "User")
-```
-
-#### macOS / Linux
+### 4. Open in Claude Code
 
 ```bash
-export OPENAI_API_KEY="sk-xxx_your_key_here"
+claude .
 ```
 
-### 3.3. How to execute
+The `.claude/commands/` directory is picked up automatically. The three slash commands are immediately available.
 
-```bash
-python summarize_youtube.py "<YOUTUBE_URL>"
-```
-
-Example:
-
-```bash
-python summarize_youtube.py "https://www.youtube.com/watch?v=Vitf8YaVXhc"
-```
-
-Save output:
-
-```bash
-python summarize_youtube.py "https://www.youtube.com/watch?v=Vitf8YaVXhc" > ./output/summary.md
-```
-
-### 3.4. Output
-
-Produces a Markdown summary containing:
-
-- Bullet-point summary
-- Key ideas
-- Actionable insights
-- Notes if transcript is truncated
-
----
-
-## 4. Troubleshooting
-
-### Missing modules
-
-```bash
-python -m pip install openai youtube-transcript-api
-```
-
-### Missing environment variable
-
-Verify:
-
-- PowerShell: `echo $env:OPENAI_API_KEY`
-- Bash: `echo $OPENAI_API_KEY`
-
----
-
-## 5. Suggested Project Structure
+### 5. Verify
 
 ```
-yt_summaries/
-├─ yt_transcript.py
-├─ summarize_youtube.py
-├─ README.md
-└─ requirements.txt
-```
-
-Example `requirements.txt`:
-
-```
-youtube-transcript-api
-openai
-```
-
-Install:
-
-```bash
-pip install -r requirements.txt
+/summarize https://www.youtube.com/watch?v=Vitf8YaVXhc
 ```
 
 ---
 
-Happy summarizing! 🎬📝
+## Output files
+
+All saved output lands in `output/`:
+
+| File | Created by |
+|------|------------|
+| `output/summary_<id>.md` | `/summarize` → file |
+| `output/transcript_<id>.txt` | `/transcript` → file |
+| `output/.last_video` | Updated after every command |
+
+---
+
+## Direct script usage
+
+`yt_transcript.py` can be run directly:
+
+```bash
+# Plain transcript
+python yt_transcript.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# With timestamps
+python yt_transcript.py "https://www.youtube.com/watch?v=VIDEO_ID" --timestamps
+
+# Bare video ID
+python yt_transcript.py VIDEO_ID --timestamps
+
+# Save to file
+python yt_transcript.py VIDEO_ID --timestamps > output/transcript.txt
+```
