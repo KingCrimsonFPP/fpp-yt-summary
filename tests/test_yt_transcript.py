@@ -30,3 +30,19 @@ def test_format_timestamp_minutes():
 
 def test_format_timestamp_hours():
     assert format_timestamp(3725.0) == "[01:02:05]"
+
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+from yt_transcript import save_last_video, load_last_video
+
+def test_save_and_load_last_video(tmp_path):
+    state_file = tmp_path / ".last_video"
+    with patch("yt_transcript.STATE_FILE", state_file):
+        save_last_video("Vitf8YaVXhc")
+        assert load_last_video() == "Vitf8YaVXhc"
+
+def test_load_last_video_returns_none_when_missing(tmp_path):
+    state_file = tmp_path / ".last_video"
+    with patch("yt_transcript.STATE_FILE", state_file):
+        assert load_last_video() is None

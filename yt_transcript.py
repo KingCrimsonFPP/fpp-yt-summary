@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import re
 import sys
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from youtube_transcript_api import (
@@ -8,6 +9,18 @@ from youtube_transcript_api import (
     TranscriptsDisabled,
     NoTranscriptFound,
 )
+
+
+STATE_FILE = Path(__file__).parent / "output" / ".last_video"
+
+def save_last_video(video_id: str) -> None:
+    STATE_FILE.parent.mkdir(exist_ok=True)
+    STATE_FILE.write_text(video_id)
+
+def load_last_video() -> str | None:
+    if STATE_FILE.exists():
+        return STATE_FILE.read_text().strip() or None
+    return None
 
 
 def format_timestamp(seconds: float) -> str:
@@ -86,6 +99,7 @@ def main():
     args = parser.parse_args()
 
     video_id = extract_video_id(args.url)
+    save_last_video(video_id)
 
     try:
         transcript_text = get_transcript(video_id, with_timestamps=args.timestamps)
