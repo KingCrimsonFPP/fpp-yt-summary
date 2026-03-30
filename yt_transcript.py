@@ -14,7 +14,7 @@ from youtube_transcript_api import (
 STATE_FILE = Path(__file__).parent / "output" / ".last_video"
 
 def save_last_video(video_id: str) -> None:
-    STATE_FILE.parent.mkdir(exist_ok=True)
+    STATE_FILE.parent.mkdir(exist_ok=True, parents=True)
     STATE_FILE.write_text(video_id)
 
 def load_last_video() -> str | None:
