@@ -10,6 +10,9 @@ If `output/.last_video` does not exist, ask the user for a URL or ID first.
 ## Steps
 
 1. Read `output/.last_video` to get the video ID.
+   Then confirm with the user before proceeding:
+   > About to search **`$ARGUMENTS`** in: https://www.youtube.com/watch?v=**<video_id>** — continue?
+   Stop and wait for confirmation. If the user says no, ask for a different URL or ID.
 
 2. Run the transcript script with timestamps:
    ```
