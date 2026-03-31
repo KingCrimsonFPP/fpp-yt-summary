@@ -15,7 +15,7 @@
       "author": {
         "name": "KingCrimsonFPP"
       },
-      "source": "./plugins/yt-summary"
+      "source": "."
     }
   ]
 }
