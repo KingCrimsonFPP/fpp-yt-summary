@@ -1,0 +1,21 @@
+{
+  "name": "fpp-yt-summary",
+  "owner": {
+    "name": "KingCrimsonFPP"
+  },
+  "metadata": {
+    "description": "YouTube summarization tools for Claude Code — summarize, transcribe, and ask questions about any video.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "yt-summary",
+      "description": "Summarize, transcribe, and ask questions about YouTube videos.",
+      "version": "1.0.0",
+      "author": {
+        "name": "KingCrimsonFPP"
+      },
+      "source": "./plugins/yt-summary"
+    }
+  ]
+}
