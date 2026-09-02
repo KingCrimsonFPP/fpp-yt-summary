@@ -74,6 +74,30 @@ class TestVttParsing:
         )
         assert [text for _, text in parse_vtt(vtt)] == ["first line", "second line", "third line"]
 
+    def test_keeps_genuine_repeats_far_apart(self):
+        """Regression: a transcript-wide dedup set deletes a speaker's every
+        later "Right." and every "[Music]" marker after the first."""
+        cues = [
+            (1, "Right."), (10, "So the next point is this."),
+            (300, "Right."), (540, "[Music]"), (720, "[Music]"),
+        ]
+        vtt = "WEBVTT\n\n" + "\n\n".join(
+            f"00:{s // 60:02d}:{s % 60:02d}.000 --> 00:{s // 60:02d}:{s % 60 + 1:02d}.000\n{t}"
+            for s, t in cues
+        )
+        assert [text for _, text in parse_vtt(vtt)] == [
+            "Right.", "So the next point is this.", "Right.", "[Music]", "[Music]",
+        ]
+
+    def test_still_drops_adjacent_rolling_repeats(self):
+        vtt = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\nfirst line\n\n"
+            "00:00:03.000 --> 00:00:05.000\nfirst line\nsecond line\n\n"
+            "00:00:05.000 --> 00:00:07.000\nsecond line\nthird line\n"
+        )
+        assert [text for _, text in parse_vtt(vtt)] == ["first line", "second line", "third line"]
+
     def test_strips_karaoke_tags_and_unescapes_entities(self):
         vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<c.colorE5E5E5>Tom &amp; Jerry</c>\n"
         assert parse_vtt(vtt) == [(1.0, "Tom & Jerry")]
@@ -81,6 +105,58 @@ class TestVttParsing:
     def test_empty_vtt_raises(self):
         with pytest.raises(RuntimeError):
             parse_vtt("WEBVTT\n\n")
+
+
+class TestPreferredVtt:
+    def test_plain_en_wins_over_a_regional_variant(self):
+        """Sorting by name alone would pick en-GB, since '-' sorts before '.'."""
+        files = ["vid.en-GB.vtt", "vid.en.vtt", "vid.en-orig.vtt"]
+        assert yt_transcript._preferred_vtt(files) == "vid.en.vtt"
+
+    def test_falls_back_to_whatever_exists(self):
+        assert yt_transcript._preferred_vtt(["vid.en-GB.vtt"]) == "vid.en-GB.vtt"
+
+    def test_none_when_no_captions(self):
+        assert yt_transcript._preferred_vtt(["vid.mp4", "vid.json"]) is None
+
+
+class TestViaYtdlp:
+    def test_temp_directory_is_cleaned_up(self, monkeypatch, tmp_path):
+        """A bulk sweep calls this hundreds of times; a leaked dir per fetch adds up."""
+        created = {}
+
+        def fake_mkdtemp():
+            d = tmp_path / "work"
+            d.mkdir()
+            created["path"] = d
+            (d / "vid.en.vtt").write_text(
+                "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello\n", encoding="utf-8"
+            )
+            return str(d)
+
+        monkeypatch.setattr(yt_transcript.tempfile, "mkdtemp", fake_mkdtemp)
+        monkeypatch.setattr(yt_transcript, "_impersonate_target", lambda: "")
+        monkeypatch.setattr(yt_transcript.subprocess, "run", lambda *a, **k: None)
+
+        assert yt_transcript.via_ytdlp("vid") == [(1.0, "hello")]
+        assert not created["path"].exists()
+
+    def test_temp_directory_is_cleaned_up_on_failure(self, monkeypatch, tmp_path):
+        created = {}
+
+        def fake_mkdtemp():
+            d = tmp_path / "work_fail"
+            d.mkdir()
+            created["path"] = d
+            return str(d)
+
+        monkeypatch.setattr(yt_transcript.tempfile, "mkdtemp", fake_mkdtemp)
+        monkeypatch.setattr(yt_transcript, "_impersonate_target", lambda: "")
+        monkeypatch.setattr(yt_transcript.subprocess, "run", lambda *a, **k: None)
+
+        with pytest.raises(RuntimeError, match="no vtt"):
+            yt_transcript.via_ytdlp("vid")
+        assert not created["path"].exists()
 
 
 class TestRender:

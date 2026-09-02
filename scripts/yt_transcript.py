@@ -30,6 +30,7 @@ Usage:
 import html
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -151,13 +152,21 @@ def vtt_time_to_seconds(stamp: str) -> float:
     return seconds
 
 
-def parse_vtt(text: str) -> list[tuple[float, str]]:
+def parse_vtt(text: str, repeat_gap: float = 15.0) -> list[tuple[float, str]]:
     """Parse WebVTT into (seconds, text), stripping karaoke tags and dropping the
-    repeated lines that auto-generated rolling captions emit."""
+    repeated lines that auto-generated rolling captions emit.
+
+    A line is dropped only when the same text already appeared within
+    ``repeat_gap`` seconds. Rolling captions restate the previous cue a second or
+    two later, so that catches them; a speaker's twentieth "Right." minutes on,
+    or a later "[Music]" marker, is genuine content and survives. Deduping
+    against the whole document instead would silently delete all of it, and the
+    loss is permanent in a saved source set.
+    """
     time_re = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?\.\d+)\s+-->")
     tag_re = re.compile(r"<[^>]+>")
 
-    current, seen, out = 0.0, set(), []
+    current, out, last_seen = 0.0, [], {}
     for line in text.splitlines():
         match = time_re.search(line)
         if match:
@@ -167,9 +176,12 @@ def parse_vtt(text: str) -> list[tuple[float, str]]:
         if not stripped or stripped.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
             continue
         cleaned = html.unescape(tag_re.sub("", line)).strip()
-        if not cleaned or cleaned in seen:
+        if not cleaned:
             continue
-        seen.add(cleaned)
+        previous = last_seen.get(cleaned)
+        last_seen[cleaned] = current
+        if previous is not None and current - previous <= repeat_gap:
+            continue
         out.append((current, cleaned))
 
     if not out:
@@ -177,31 +189,46 @@ def parse_vtt(text: str) -> list[tuple[float, str]]:
     return out
 
 
+def _preferred_vtt(filenames: list[str]) -> str | None:
+    """Pick the best caption file yt-dlp wrote.
+
+    A video commonly yields several (``<id>.en.vtt``, ``<id>.en-GB.vtt``,
+    ``<id>.en-orig.vtt``). Plain ``en`` is preferred; picking by plain sort order
+    would let a regional variant win, since '-' sorts before '.'.
+    """
+    vtts = [f for f in filenames if f.endswith(".vtt")]
+    if not vtts:
+        return None
+    return min(vtts, key=lambda f: (not f.endswith(".en.vtt"), len(f), f))
+
+
 def via_ytdlp(video_id: str) -> list[tuple[float, str]]:
     """Fetch auto-subs via yt-dlp and parse the resulting WebVTT."""
     workdir = tempfile.mkdtemp()
-    base = os.path.join(workdir, video_id)
-    cmd = [
-        "yt-dlp", "--skip-download", "--write-auto-subs", "--write-subs",
-        "--sub-lang", "en.*", "--sub-format", "vtt",
-        "--sleep-requests", "1", "--no-warnings",
-        "-o", base + ".%(ext)s",
-        f"https://www.youtube.com/watch?v={video_id}",
-    ]
-    target = _impersonate_target()
-    if target:
-        cmd[1:1] = ["--impersonate", target]
+    try:
+        base = os.path.join(workdir, video_id)
+        cmd = [
+            "yt-dlp", "--skip-download", "--write-auto-subs", "--write-subs",
+            "--sub-lang", "en.*", "--sub-format", "vtt",
+            "--sleep-requests", "1", "--no-warnings",
+            "-o", base + ".%(ext)s",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        target = _impersonate_target()
+        if target:
+            cmd[1:1] = ["--impersonate", target]
 
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-    vtt = next(
-        (os.path.join(workdir, f) for f in sorted(os.listdir(workdir)) if f.endswith(".vtt")),
-        None,
-    )
-    if not vtt:
-        raise RuntimeError("no vtt written")
-    with open(vtt, encoding="utf-8", errors="replace") as fh:
-        return parse_vtt(fh.read())
+        chosen = _preferred_vtt(os.listdir(workdir))
+        if not chosen:
+            raise RuntimeError("no vtt written")
+        with open(os.path.join(workdir, chosen), encoding="utf-8", errors="replace") as fh:
+            return parse_vtt(fh.read())
+    finally:
+        # A bulk sweep runs this hundreds of times; without cleanup each fetch
+        # strands a directory and its caption file in the system temp dir.
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def fetch_segments(video_id: str, languages=None) -> tuple[list[tuple[float, str]], str]:

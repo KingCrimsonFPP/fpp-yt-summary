@@ -30,7 +30,15 @@ import channel_videos as cv  # noqa: E402
 from ingest_video import DEFAULT_OUTPUT_DIR, ingest, ingested_video_ids  # noqa: E402
 
 BACKOFF = [60, 180, 420, 900, 1800, 3600]  # seconds; the last value repeats
-RATE_LIMITED = re.compile(r"429|IpBlocked|Too Many Requests|RequestBlocked", re.I)
+
+# Deliberately not a bare "429": the string this is matched against embeds the
+# video id, and ids are 11 chars of [A-Za-z0-9_-], so one containing "429" would
+# turn every permanent failure on that video (captions disabled, deleted) into a
+# false rate-limit verdict — and the retry path would then stall on it for hours.
+RATE_LIMITED = re.compile(
+    r"IpBlocked|RequestBlocked|Too Many Requests|HTTP Error 429|Error 429|429 Client Error",
+    re.I,
+)
 PREMIERE = re.compile(r"premiere|live event will begin|not yet available|hasn't started", re.I)
 
 
@@ -68,7 +76,8 @@ def log(message, logpath=None):
             pass
 
 
-def collect_candidates(channels, since_days, limit_per_channel=None, stop_after_old=5, logpath=None):
+def collect_candidates(channels, since_days, limit_per_channel=None, stop_after_old=5,
+                       logpath=None, probe_pace=1.0):
     """Poll each channel and return the deduped candidate list, newest tab order."""
     import datetime
 
@@ -77,17 +86,23 @@ def collect_candidates(channels, since_days, limit_per_channel=None, stop_after_
 
     for channel in channels:
         try:
-            videos = cv.list_channel(channel)
+            videos = cv.list_channel(
+                channel,
+                on_tab_error=lambda tab, err, c=channel: log(f"TAB-FAIL {c} /{tab}: {err}", logpath),
+            )
             try:
                 known = cv.rss_dates(cv.channel_id(channel))
-            except Exception:
+            except Exception as exc:
+                # Without RSS dates every video is probed individually, which is
+                # the expensive path — say so rather than doing it silently.
+                log(f"RSS-MISS {channel}: {exc} — dating each video individually", logpath)
                 known = {}
-            videos = cv.apply_date_window(videos, cutoff, known, stop_after_old)
+            videos = cv.apply_date_window(videos, cutoff, known, stop_after_old, probe_pace)
         except Exception as exc:
             log(f"CHANNEL-FAIL {channel}: {exc}", logpath)
             continue
 
-        if limit_per_channel:
+        if limit_per_channel is not None:
             videos = videos[:limit_per_channel]
 
         fresh = 0
@@ -103,14 +118,16 @@ def collect_candidates(channels, since_days, limit_per_channel=None, stop_after_
 
 
 def sweep(manifest, output_dir=DEFAULT_OUTPUT_DIR, since_days=7, limit_per_channel=None,
-          pace=8.0, max_block=30, dry_run=False, logpath=None, stop_after_old=5):
+          pace=8.0, max_block=30, dry_run=False, logpath=None, stop_after_old=5,
+          probe_pace=1.0):
     channels = read_manifest(manifest)
     if not channels:
         log(f"no channels found in {manifest}", logpath)
-        return {"ingested": 0, "skipped": 0, "failed": 0, "candidates": []}
+        return {"ingested": 0, "skipped": 0, "failed": 0, "blocked": False, "candidates": []}
 
     log(f"sweeping {len(channels)} channel(s), last {since_days} day(s)", logpath)
-    candidates = collect_candidates(channels, since_days, limit_per_channel, stop_after_old, logpath)
+    candidates = collect_candidates(channels, since_days, limit_per_channel, stop_after_old,
+                                    logpath, probe_pace)
 
     already = ingested_video_ids(output_dir)
     todo = [c for c in candidates if c["video_id"] not in already]
@@ -120,10 +137,11 @@ def sweep(manifest, output_dir=DEFAULT_OUTPUT_DIR, since_days=7, limit_per_chann
     if dry_run:
         for candidate in todo:
             log(f"WOULD INGEST {candidate['video_id']} :: {candidate['title']}", logpath)
-        return {"ingested": 0, "skipped": 0, "failed": 0, "candidates": todo}
+        return {"ingested": 0, "skipped": 0, "failed": 0, "blocked": False, "candidates": todo}
 
     ingested = skipped = failed = 0
     consecutive_blocks = 0
+    blocked = False
     index = 0
 
     while index < len(todo):
@@ -137,6 +155,7 @@ def sweep(manifest, output_dir=DEFAULT_OUTPUT_DIR, since_days=7, limit_per_chann
             if RATE_LIMITED.search(message):
                 consecutive_blocks += 1
                 if consecutive_blocks >= max_block:
+                    blocked = True
                     log(f"BLOCKED {consecutive_blocks}x consecutively — stopping. "
                         f"{len(todo) - index} left; rerun to resume.", logpath)
                     break
@@ -167,8 +186,10 @@ def sweep(manifest, output_dir=DEFAULT_OUTPUT_DIR, since_days=7, limit_per_chann
             log(f"OK [{ingested}] {video_id} -> {result['slug']}", logpath)
             time.sleep(pace)
 
-    log(f"sweep end: ingested={ingested} skipped={skipped} failed={failed}", logpath)
-    return {"ingested": ingested, "skipped": skipped, "failed": failed, "candidates": todo}
+    log(f"sweep end: ingested={ingested} skipped={skipped} failed={failed}"
+        f"{' (gave up: rate limited)' if blocked else ''}", logpath)
+    return {"ingested": ingested, "skipped": skipped, "failed": failed,
+            "blocked": blocked, "candidates": todo}
 
 
 def main():
@@ -186,6 +207,8 @@ def main():
                         help="Give up after this many consecutive rate-limit blocks")
     parser.add_argument("--stop-after-old", type=int, default=5,
                         help="Stop date-probing a channel after this many consecutive old videos")
+    parser.add_argument("--probe-pace", type=float, default=1.0,
+                        help="Seconds between per-video date probes while polling (default: 1)")
     parser.add_argument("--dry-run", action="store_true",
                         help="List what would be ingested and exit")
     parser.add_argument("--no-api", action="store_true",
@@ -199,7 +222,13 @@ def main():
     result = sweep(
         args.manifest, args.output_dir, args.since_days, args.limit_per_channel,
         args.pace, args.max_block, args.dry_run, args.log, args.stop_after_old,
+        args.probe_pace,
     )
+
+    # 2 = gave up rate-limited, so a scheduled wrapper can tell "the IP is
+    # blocked, nothing was done" apart from "nothing new to fetch" (0).
+    if result["blocked"]:
+        sys.exit(2)
     sys.exit(1 if result["failed"] and not result["ingested"] else 0)
 
 

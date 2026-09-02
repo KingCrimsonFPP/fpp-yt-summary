@@ -42,7 +42,8 @@ class TestSweep:
         return path
 
     def stub_channel(self, monkeypatch, videos):
-        monkeypatch.setattr(sweep_module.cv, "list_channel", lambda url: videos)
+        monkeypatch.setattr(sweep_module.cv, "list_channel",
+                            lambda url, tabs=None, on_tab_error=None: videos)
         monkeypatch.setattr(sweep_module.cv, "channel_id", lambda url: "UC123")
         monkeypatch.setattr(sweep_module.cv, "rss_dates", lambda cid: {
             v["video_id"]: "2026-08-30" for v in videos
@@ -82,7 +83,8 @@ class TestSweep:
                             lambda *a, **k: pytest_fail_ingest())
 
         result = sweep(self.manifest(tmp_path), tmp_path / "out", since_days=3650, pace=0)
-        assert result == {"ingested": 0, "skipped": 0, "failed": 0, "candidates": []}
+        assert result == {"ingested": 0, "skipped": 0, "failed": 0,
+                          "blocked": False, "candidates": []}
 
     def test_unaired_premiere_is_skipped_not_failed(self, tmp_path, monkeypatch):
         self.stub_channel(monkeypatch, [{"video_id": "aaaaaaaaaaa", "title": "soon", "tab": "videos"}])
@@ -112,6 +114,55 @@ class TestSweep:
 
         assert attempts == ["aaaaaaaaaaa"] * 3  # retried the same id, never advanced past it
         assert result["ingested"] == 0
+
+    def test_giving_up_rate_limited_is_reported_as_blocked(self, tmp_path, monkeypatch):
+        """Otherwise a sweep that wasted hours achieving nothing is
+        indistinguishable from one that found nothing new."""
+        self.stub_channel(monkeypatch, [{"video_id": "aaaaaaaaaaa", "title": "one", "tab": "videos"}])
+
+        def blocked(video_id, output_dir):
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+
+        monkeypatch.setattr(sweep_module, "ingest", blocked)
+        monkeypatch.setattr(sweep_module.time, "sleep", lambda s: None)
+
+        result = sweep(self.manifest(tmp_path), tmp_path / "out",
+                       since_days=3650, pace=0, max_block=2)
+        assert result["blocked"] is True
+
+    def test_a_clean_sweep_is_not_marked_blocked(self, tmp_path, monkeypatch):
+        self.stub_channel(monkeypatch, [{"video_id": "aaaaaaaaaaa", "title": "one", "tab": "videos"}])
+        monkeypatch.setattr(sweep_module, "ingest",
+                            lambda v, o: {"slug": "s", "skipped": False, "path": "p"})
+        result = sweep(self.manifest(tmp_path), tmp_path / "out", since_days=3650, pace=0)
+        assert result["blocked"] is False
+
+    def test_a_video_id_containing_429_is_not_a_rate_limit(self, tmp_path, monkeypatch):
+        """Regression: video ids are 11 chars of [A-Za-z0-9_-], so one can contain
+        '429'. A bare-429 match turned a permanently dead video into an infinite
+        backoff loop that stalled the whole sweep for hours."""
+        self.stub_channel(monkeypatch, [
+            {"video_id": "a429bcdefgh", "title": "dead", "tab": "videos"},
+            {"video_id": "bbbbbbbbbbb", "title": "fine", "tab": "videos"},
+        ])
+        attempts = []
+
+        def ingest(video_id, output_dir):
+            attempts.append(video_id)
+            if video_id == "a429bcdefgh":
+                raise RuntimeError(
+                    "transcript unavailable for a429bcdefgh: "
+                    "api=NoTranscriptFound() ytdlp=RuntimeError('no vtt written')"
+                )
+            return {"slug": "s", "skipped": False, "path": "p"}
+
+        monkeypatch.setattr(sweep_module, "ingest", ingest)
+        monkeypatch.setattr(sweep_module.time, "sleep", lambda s: None)
+
+        result = sweep(self.manifest(tmp_path), tmp_path / "out", since_days=3650, pace=0)
+        assert attempts == ["a429bcdefgh", "bbbbbbbbbbb"]  # moved on, did not retry
+        assert result["failed"] == 1 and result["ingested"] == 1
+        assert result["blocked"] is False
 
     def test_ordinary_failure_advances_to_the_next_video(self, tmp_path, monkeypatch):
         self.stub_channel(monkeypatch, [

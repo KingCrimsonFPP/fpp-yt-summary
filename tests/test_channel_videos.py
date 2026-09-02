@@ -24,6 +24,15 @@ class TestNormalizeChannelUrl:
         with pytest.raises(ValueError):
             normalize_channel_url("   ")
 
+    def test_a_handle_named_after_a_tab_is_not_eaten(self):
+        """Stripping trailing tabs unconditionally would turn the handle
+        '@videos' into the bare youtube.com root."""
+        assert normalize_channel_url("@videos") == "https://www.youtube.com/@videos"
+        assert normalize_channel_url("@shorts") == "https://www.youtube.com/@shorts"
+
+    def test_bare_handle_with_a_tab_suffix_is_stripped(self):
+        assert normalize_channel_url("@somechannel/videos") == "https://www.youtube.com/@somechannel"
+
 
 class TestListChannel:
     def test_merges_tabs_and_dedupes(self, monkeypatch):
@@ -113,6 +122,43 @@ class TestApplyDateWindow:
 
         kept = apply_date_window(videos, "2026-08-01", {}, stop_after_old=1)
         assert [v["video_id"] for v in kept] == ["bbbbbbbbbbb"]
+
+    def test_early_stop_is_per_tab_so_shorts_survive(self, monkeypatch):
+        """Regression: with one counter shared across the merged tab list, the
+        walk breaks inside /videos — every channel has more than stop_after_old
+        old uploads — and no short is ever examined."""
+        monkeypatch.setattr(cv, "probe_upload_date", lambda vid: "")
+        videos = [
+            {"video_id": f"v{i:010d}", "title": f"v{i}", "tab": "videos"} for i in range(8)
+        ] + [
+            {"video_id": f"s{i:010d}", "title": f"s{i}", "tab": "shorts"} for i in range(3)
+        ]
+        known = {"v0000000000": "2026-08-30"}
+        known.update({f"v{i:010d}": "2020-01-01" for i in range(1, 8)})
+        known.update({f"s{i:010d}": "2026-08-29" for i in range(3)})
+
+        kept = apply_date_window(videos, "2026-08-25", known, stop_after_old=5)
+        assert [v["video_id"] for v in kept if v["tab"] == "shorts"] == [
+            "s0000000000", "s0000000001", "s0000000002",
+        ]
+        assert "v0000000000" in [v["video_id"] for v in kept]
+
+    def test_probes_are_paced(self, monkeypatch):
+        """Probing is one request per video; unpaced it can trip the very rate
+        limit the ingest phase is built to survive."""
+        slept = []
+        monkeypatch.setattr(cv, "probe_upload_date", lambda vid: "2026-08-30")
+        monkeypatch.setattr(cv.time, "sleep", lambda s: slept.append(s))
+        videos = [self.video(f"{c}" * 11) for c in "abc"]
+
+        apply_date_window(videos, "2026-08-01", {}, pace=2.0)
+        assert slept == [2.0, 2.0]  # between probes, not before the first
+
+    def test_no_sleeping_when_rss_covered_everything(self, monkeypatch):
+        monkeypatch.setattr(cv, "probe_upload_date", lambda vid: pytest.fail("should not probe"))
+        monkeypatch.setattr(cv.time, "sleep", lambda s: pytest.fail("should not sleep"))
+        videos = [self.video("aaaaaaaaaaa")]
+        apply_date_window(videos, "2026-08-01", {"aaaaaaaaaaa": "2026-08-30"}, pace=5.0)
 
     def test_result_is_newest_first(self, monkeypatch):
         monkeypatch.setattr(cv, "probe_upload_date", lambda vid: "")

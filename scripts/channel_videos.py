@@ -27,7 +27,9 @@ import re
 import ssl
 import subprocess
 import sys
+import time
 import urllib.request
+from itertools import groupby
 
 try:
     from defusedxml.ElementTree import fromstring as xml_fromstring
@@ -47,14 +49,19 @@ def normalize_channel_url(value: str) -> str:
         raise ValueError("empty channel reference")
 
     if value.startswith("@"):
-        return f"https://www.youtube.com/{value}"
-
-    if not value.startswith(("http://", "https://")):
+        value = f"https://www.youtube.com/{value}"
+    elif not value.startswith(("http://", "https://")):
         value = "https://" + value
 
-    for tab in TABS + ("streams", "featured"):
-        if value.endswith("/" + tab):
-            value = value[: -(len(tab) + 1)]
+    # Strip a trailing tab only when something identifying the channel precedes
+    # it. Without that guard a channel literally handled "@videos" loses its own
+    # handle and we end up requesting https://www.youtube.com/videos.
+    for tab in TABS + ("streams", "featured", "playlists"):
+        suffix = "/" + tab
+        if value.endswith(suffix):
+            stem = value[: -len(suffix)]
+            if re.search(r"/(@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)$", stem):
+                value = stem
             break
     return value
 
@@ -80,18 +87,26 @@ def flat_list(url: str) -> tuple[list[dict], str | None]:
     return videos, None
 
 
-def list_channel(base_url: str, tabs=TABS) -> list[dict]:
+def list_channel(base_url: str, tabs=TABS, on_tab_error=None) -> list[dict]:
     """Videos across the channel's tabs, deduped by id, listing order preserved.
 
     Raises if *every* tab failed — that means the channel reference is wrong (a
     common one: using the channel's display name where its @handle is required),
     and reporting yt-dlp's own message beats an empty list.
+
+    ``on_tab_error`` is called for each individual tab failure. A failing tab is
+    usually benign (no /shorts page), but it can also be a transient error on
+    /videos, in which case the listing silently under-reports and the sweep's
+    idempotence means a later rerun never notices the gap. The caller gets told
+    either way and decides whether to care.
     """
     seen, out, errors = set(), [], []
     for tab in tabs:
         videos, error = flat_list(f"{base_url}/{tab}")
         if error:
             errors.append(f"{tab}: {error}")
+            if on_tab_error:
+                on_tab_error(tab, error)
         for video in videos:
             if video["video_id"] in seen:
                 continue
@@ -142,31 +157,46 @@ def probe_upload_date(video_id: str) -> str:
     return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
 
 
-def apply_date_window(videos, cutoff, known_dates, stop_after_old=5):
+def apply_date_window(videos, cutoff, known_dates, stop_after_old=5, pace=0.0):
     """Keep videos published on/after ``cutoff``, dating the ones RSS missed.
 
     Stops probing after ``stop_after_old`` consecutive out-of-window videos, so a
     channel with a decade of uploads costs a handful of requests rather than one
     per video. Undatable videos (unaired premieres) are dropped from a windowed
     listing but do not count toward the stop, since they carry no date signal.
+
+    **The early stop is per tab.** ``videos`` arrives grouped by tab, and every
+    established channel has more than ``stop_after_old`` old uploads at the tail
+    of /videos — so a counter shared across the whole list would break before
+    reaching the first short and silently drop every short the channel has.
+
+    ``pace`` seconds are slept between individual date probes. Probing is one
+    request per video, and a channel whose RSS lookup failed probes all of them,
+    so an unpaced walk here can provoke the rate limit the ingest phase is built
+    to survive.
     """
-    kept, consecutive_old = [], 0
+    kept, probed = [], False
 
-    for video in videos:
-        published = known_dates.get(video["video_id"])
-        if published is None:
-            published = probe_upload_date(video["video_id"])
+    for _tab, group in groupby(videos, key=lambda v: v.get("tab")):
+        consecutive_old = 0
+        for video in group:
+            published = known_dates.get(video["video_id"])
+            if published is None:
+                if probed and pace:
+                    time.sleep(pace)
+                published = probe_upload_date(video["video_id"])
+                probed = True
 
-        if not published:
-            continue
+            if not published:
+                continue
 
-        if published >= cutoff:
-            kept.append({**video, "published": published})
-            consecutive_old = 0
-        else:
-            consecutive_old += 1
-            if consecutive_old >= stop_after_old:
-                break
+            if published >= cutoff:
+                kept.append({**video, "published": published})
+                consecutive_old = 0
+            else:
+                consecutive_old += 1
+                if consecutive_old >= stop_after_old:
+                    break  # done with this tab; the next one still gets walked
 
     kept.sort(key=lambda v: v["published"], reverse=True)
     return kept
@@ -180,6 +210,8 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Cap the result count")
     parser.add_argument("--stop-after-old", type=int, default=5,
                         help="Stop date-probing after this many consecutive out-of-window videos")
+    parser.add_argument("--probe-pace", type=float, default=1.0,
+                        help="Seconds between per-video date probes (default: 1)")
     args = parser.parse_args()
 
     try:
@@ -204,9 +236,9 @@ def main():
             known = rss_dates(channel_id(base))
         except Exception:
             known = {}  # every video gets probed individually instead
-        videos = apply_date_window(videos, cutoff, known, args.stop_after_old)
+        videos = apply_date_window(videos, cutoff, known, args.stop_after_old, args.probe_pace)
 
-    if args.limit:
+    if args.limit is not None:
         videos = videos[: args.limit]
 
     for video in videos:

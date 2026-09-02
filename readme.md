@@ -111,9 +111,6 @@ locations are safe by default.
   verification — don't reach for `--no-check-certificates`, which turns the
   interception you're diagnosing into one you can no longer detect.
 
-  The plugin does no certificate handling of its own and never disables
-  verification.
-
 ## Development
 
 ```bash
