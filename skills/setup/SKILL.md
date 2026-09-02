@@ -1,23 +1,42 @@
 ---
 name: yt-summary:setup
-description: Set up the yt-summary plugin by installing required dependencies, or install youtube-transcript-api if another yt-summary skill fails due to missing dependencies
+description: Set up the yt-summary plugin by installing its Python dependencies, or install them if another yt-summary skill fails with a missing-dependency or missing yt-dlp error
 ---
 
 # Setup yt-summary Plugin
 
-The user is setting up the yt-summary plugin or one of its skills has failed due to missing the `youtube-transcript-api` dependency.
+The user is setting up the yt-summary plugin, or one of its skills has failed
+because a dependency is missing.
 
 ## Task
 
-Install the required Python dependency for the yt-summary plugin:
+Install the plugin's Python dependencies:
 
-1. Run `pip install youtube-transcript-api`
-2. Wait for the installation to complete successfully
-3. Confirm success with a message indicating the dependency is now installed
-4. Inform the user that they can now use the summarize, transcript, and ask skills
+1. Run `pip install -r {plugin_dir}/requirements.txt`, where `{plugin_dir}` is the
+   plugin's installation directory. If that path isn't resolvable, fall back to
+   `pip install youtube-transcript-api yt-dlp`.
+2. Wait for the installation to finish.
+3. Confirm success and tell the user the skills are ready: `summarize`,
+   `transcript`, `ask`, `ingest`, `digest`, and `mass-ingest`.
 
 ## Notes
 
-- The `youtube-transcript-api` package is required by the plugin's transcript fetching functionality
-- This dependency is specified in the `requirements.txt` file at the plugin root
-- The script that uses this dependency is `scripts/yt_transcript.py` within the plugin directory
+- **`youtube-transcript-api`** is the primary transcript source.
+- **`yt-dlp`** is the fallback transcript source and how title/channel/date and
+  channel listings are resolved. `ingest` and `mass-ingest` need it;
+  `transcript`, `summarize`, and `ask` work without it as long as the API path
+  succeeds.
+- Optional: installing `curl_cffi` alongside `yt-dlp` enables
+  `--impersonate`, which helps get past YouTube's throttling on the caption
+  endpoint. The scripts detect it and use it if present. Verify with
+  `yt-dlp --list-impersonate-targets`.
+- **Behind a TLS-inspecting proxy** (corporate MITM, some AV suites): install with
+  `pip install --cert <path-to-ca.pem> -r requirements.txt`.
+
+  For fetching, the simplest complete fix is to append the proxy's root CA to the
+  certifi bundle (`python -m certifi` prints the path) — all three of the plugin's
+  network paths default to it. Per-path env vars (`SSL_CERT_FILE` /
+  `REQUESTS_CA_BUNDLE` for the API, `CURL_CA_BUNDLE` for yt-dlp's caption
+  download) work too; see the `ingest` skill for the full table.
+
+  Never disable certificate verification to work around this.
