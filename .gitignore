@@ -1,8 +1,18 @@
 __pycache__/
 *.pyc
 .venv/
+.claude/settings.local.json
+.fpp-dev
+
+# Fetched output and run state. `scripts/output/` is the location the plugin's
+# own scripts write .last_video to when run in place.
 output/*.md
 output/*.txt
-.claude/settings.local.json
+output/*/
 output/.last_video
-.fpp-dev
+scripts/output/
+
+# Channel manifests for mass-ingest. A real subscription list is personal data —
+# keep yours out of the repo; examples/channels.example.txt documents the format.
+channels.txt
+subscriptions.txt
