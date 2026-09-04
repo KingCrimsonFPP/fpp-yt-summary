@@ -27,7 +27,7 @@ as many times as you like without refetching.
 Requires Python 3.10+ and Claude Code.
 
 ```bash
-/plugin marketplace add fpperri/fpp-yt-summary
+/plugin marketplace add fpperri/yt-summary
 ```
 
 Then install the Python dependencies — ask Claude to run the `setup` skill, or:
