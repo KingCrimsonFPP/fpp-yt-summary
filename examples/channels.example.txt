@@ -1,0 +1,37 @@
+# Example channel manifest for yt-summary:mass-ingest
+#
+# Copy this somewhere of your own and edit it — your real subscription list is
+# personal data and should not be committed. `channels.txt` and
+# `subscriptions.txt` are gitignored in this repo for exactly that reason.
+#
+# Usage:
+#   python scripts/sweep.py my-channels.txt --output-dir output --since-days 7 --dry-run
+#
+# Format
+# ------
+# One channel per line. Blank lines are ignored. Everything after a `#` is a
+# comment, so you can annotate a line inline.
+#
+# Any of these forms work, and all four of the lines below would resolve to the
+# same channel and be polled only once:
+#
+#   @examplechannel
+#   youtube.com/@examplechannel
+#   https://www.youtube.com/@examplechannel
+#   https://www.youtube.com/@examplechannel/videos
+#
+# A /channel/UC... URL works too:
+#
+#   https://www.youtube.com/channel/UCexampleexampleexampl
+#
+# Both the /videos and /shorts tabs of each channel are walked, so shorts are
+# picked up without listing them separately.
+#
+# Use the @handle, NOT the channel's display name — they are often different and
+# the display name simply 404s. Open any video from the channel and copy the
+# handle out of its URL.
+
+# --- fictional examples; replace with your own ---
+@example-conference-talks
+@example-deep-dives                          # long-form, posts irregularly
+https://www.youtube.com/@example-news        # daily uploads

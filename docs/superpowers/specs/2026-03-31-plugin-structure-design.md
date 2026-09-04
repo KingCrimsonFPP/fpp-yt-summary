@@ -3,6 +3,10 @@
 **Date:** 2026-03-31
 **Status:** Approved
 
+> Historical record. The `KingCrimsonFPP` handle below was renamed to `fpperri` on
+> 2026-09-01; it is kept here verbatim because this document describes the repo as it
+> stood in March 2026. Live manifests and docs use `fpperri`.
+
 ## Goal
 
 Restructure the `fpp-yt-summary` repo into the standard Claude Code plugin format so it can be distributed via `/plugin marketplace add KingCrimsonFPP/fpp-yt-summary`.

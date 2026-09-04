@@ -1,1 +1,11 @@
 youtube-transcript-api
+
+# Fallback transcript source, plus how video/channel metadata is resolved.
+# The ingest and mass-ingest skills need it; transcript/summarize/ask work
+# without it as long as the API path succeeds.
+yt-dlp
+
+# Hardens the channel RSS parse against entity-expansion attacks. channel_videos
+# falls back to the stdlib parser when it is absent, so this makes the existing
+# preference real rather than inert.
+defusedxml
